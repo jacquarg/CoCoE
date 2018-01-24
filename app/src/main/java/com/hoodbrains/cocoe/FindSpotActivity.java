@@ -1,10 +1,7 @@
 package com.hoodbrains.cocoe;
 
 import android.app.Activity;
-
-
 import android.content.Context;
-import android.content.Intent;
 import android.graphics.ImageFormat;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
@@ -40,12 +37,11 @@ import java.util.Date;
 import java.util.List;
 
 // https://www.programcreek.com/java-api-examples/index.php?api=android.hardware.camera2.CameraManager
-public class MainActivity extends Activity {
+public class FindSpotActivity extends Activity {
     private static final String TAG = "AndroidCameraApi";
 
-    private Button takePictureButton;
-    private Button testButton;
-
+    private Button closeButton;
+    private TextureView textureView;
     private TextView blink;
 
     private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
@@ -64,80 +60,41 @@ public class MainActivity extends Activity {
     private Handler mBackgroundHandler;
     private HandlerThread mBackgroundThread;
 
-    private ImageReader reader;
-
-    private enum Modes {
-        HIDDLE("Pause"),
-        RUN("Mesurer");
-
-        private final String label;
-
-        Modes(String label) {
-            this.label = label;
-        }
-        public Modes next() {
-            switch (this) {
-                case HIDDLE: return RUN;
-                default: return RUN;
-            }
-        }
-    }
-
-    private Modes currentMode = Modes.HIDDLE;
 
     /* Lifecycle */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        takePictureButton = (Button) findViewById(R.id.btn_takepicture);
-        assert takePictureButton != null;
-        takePictureButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Button button = (Button) v;
-
-                closeCamera();
-                stopBackgroundThread();
-
-                currentMode = currentMode.next();
-                button.setText(currentMode.next().label);
-
-                startBackgroundThread();
-
-                openCamera();
-            }
-        });
-        testButton = (Button) findViewById(R.id.btn_test);
-        assert testButton != null;
-        testButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Intent intent = new Intent(MainActivity.this, FindSpotActivity.class);
-                startActivity(intent);
-            }
-        });
-
-                blink = (TextView) findViewById(R.id.blink);
+        textureView = (TextureView) findViewById(R.id.texture);
+        assert textureView != null;
+//        close = (Button) findViewById(R.id.btn_takepicture);
+//        assert takePictureButton != null;
+//        takePictureButton.setOnClickListener(new View.OnClickListener() {
+//            @Override
+//            public void onClick(View v) {
+//            }
+//        });
+        blink = (TextView) findViewById(R.id.blink);
         assert blink != null;
     }
 
-//    @Override
-//    protected void onResume() {
-//        super.onResume();
-//        startBackgroundThread();
-//        if (textureView.isAvailable()) {
-//            openCamera();
-//        } else {
-//            textureView.setSurfaceTextureListener(textureListener);
-//        }
-//    }
-//    @Override
-//    protected void onPause() {
-//        closeCamera();
-//        stopBackgroundThread();
-//        super.onPause();
-//    }
+    @Override
+    protected void onResume() {
+        super.onResume();
+        startBackgroundThread();
+        if (textureView.isAvailable()) {
+            openCamera();
+        } else {
+            textureView.setSurfaceTextureListener(textureListener);
+        }
+    }
+    @Override
+    protected void onPause() {
+        closeCamera();
+        stopBackgroundThread();
+        super.onPause();
+    }
 
     /* END Lifecycle */
 
@@ -230,7 +187,7 @@ public class MainActivity extends Activity {
             List<Surface> outputSurfaces = new ArrayList<Surface>(1);
             final CaptureRequest.Builder captureBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
 
-            registerBlinkDetector(captureBuilder, outputSurfaces);
+            registerTextureView(captureBuilder, outputSurfaces);
 
             cameraDevice.createCaptureSession(outputSurfaces, new CameraCaptureSession.StateCallback(){
                 @Override
@@ -248,7 +205,7 @@ public class MainActivity extends Activity {
                 }
                 @Override
                 public void onConfigureFailed(CameraCaptureSession cameraCaptureSession) {
-                    Toast.makeText(MainActivity.this, "Configuration change", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(FindSpotActivity.this, "Configuration change", Toast.LENGTH_SHORT).show();
                 }
             }, null);
         } catch (CameraAccessException e) {
@@ -259,97 +216,34 @@ public class MainActivity extends Activity {
 
     /* END Camera handling */
 
-    /* Detecting blinks */
-
-    void registerBlinkDetector(CaptureRequest.Builder captureBuilder, List<Surface> outputSurfaces) {
-        int width = 100;
-        int height = 100;
-        reader = ImageReader.newInstance(width, height, ImageFormat.YUV_420_888, 1);
-        outputSurfaces.add(reader.getSurface());
-        captureBuilder.addTarget(reader.getSurface());
-
-        // Orientation
-        //int rotation = getWindowManager().getDefaultDisplay().getRotation();
-        //captureBuilder.set(CaptureRequest.JPEG_ORIENTATION, ORIENTATIONS.get(rotation));
-        //final File file = new File(Environment.getExternalStorageDirectory()+"/pic.jpg");
-        ImageReader.OnImageAvailableListener readerListener = new ImageReader.OnImageAvailableListener() {
-            @Override
-            public void onImageAvailable(ImageReader reader) {
-                Image image = null;
-                //image = reader.acquireLatestImage();
-                image = reader.acquireNextImage();
-                if (isBlink(image)) {
-                    Log.d(TAG, "blink!");
-                    persistBlink();
-                }
-
-                if (image != null) {
-                    image.close();
-                }
-            }
-        };
-
-        reader.setOnImageAvailableListener(readerListener, mBackgroundHandler);
-    }
-
-    long lastBlinkTime = System.currentTimeMillis();
-
-    boolean isBlink(Image image) {
-        int BLINK_TRESHOLD = 30;
-        // Minimal Period between two blink. for 1Wh/blink, 300ms -> 11kVA
-        int BLINK_MIN_PERIOD = 300;
-
-        long now = System.currentTimeMillis();
-        if (now < lastBlinkTime + BLINK_MIN_PERIOD) {
+    /* Show preview */
+    TextureView.SurfaceTextureListener textureListener = new TextureView.SurfaceTextureListener() {
+        @Override
+        public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
+            openCamera();
+        }
+        @Override
+        public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
+            // Transform you image captured size according to the surface width and height
+        }
+        @Override
+        public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
             return false;
         }
-
-        ByteBuffer buffer = image.getPlanes()[0].getBuffer();
-
-        byte[] bytes = new byte[buffer.capacity()];
-        buffer.get(bytes);
-
-        double moy = 0;
-        for (byte y :bytes) {
-            moy += 0xff & y;
+        @Override
+        public void onSurfaceTextureUpdated(SurfaceTexture surface) {
         }
-        moy = moy / buffer.capacity();
-        Log.d("Y moy: ", "" + moy);
+    };
 
-//        final double average = moy;
-//        runOnUiThread(new Runnable(){
-//            @Override
-//            public void run(){
-//                blink.setText("" + average);
-//            }
-//        });
-        boolean blink = moy > BLINK_TRESHOLD;
-        if (blink) {
-            lastBlinkTime = now;
-        }
-        return blink;
+    void registerTextureView(CaptureRequest.Builder captureBuilder, List<Surface> outputSurfaces) {
+        SurfaceTexture texture = textureView.getSurfaceTexture();
+        assert texture != null;
+        texture.setDefaultBufferSize(imageDimension.getWidth(), imageDimension.getHeight());
+        Surface surface = new Surface(texture);
+        outputSurfaces.add(surface);
+        captureBuilder.addTarget(surface);
     }
-    /* END Detecting blinks */
 
 
-
-    /* Write in file */
-    void persistBlink() {
-        FileWriter f;
-        try {
-            SimpleDateFormat isoDate = new SimpleDateFormat("yyyyMMdd");
-            SimpleDateFormat isoDateTime = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ");
-
-            Date now = new Date();
-
-            f = new FileWriter(getExternalFilesDir(null).getAbsolutePath() + "/blinks_" + isoDate.format(now) + ".txt", true);
-            f.write(isoDateTime.format(now) + "\n");
-            f.flush();
-            f.close();
-        } catch (IOException e) {
-            Log.e(TAG, e.toString());
-        }
-    }
-    /* END Write in file */
-
+    /* END Show preview */
 }
